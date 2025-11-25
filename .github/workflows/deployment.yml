@@ -60,7 +60,9 @@ jobs:
         run: |
           # copy into root and /app (many images use /app as working dir); ignore errors if a path doesn't exist
           docker cp .env tempcontainer:/.env || true
+          docker cp src/.env tempcontainer:/.env || true
           docker cp .env tempcontainer:/app/.env || true
+          docker cp src/.env tempcontainer:/app/.env || true
 
       - name: Commit container as final image tag
         run: |
