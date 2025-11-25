@@ -8,7 +8,7 @@
 # - ACR_PASSWORD
 # - IMAGE_NAME     (image name, e.g. my-app)
 # - ENV            (the full contents of your .env; treated as a secret)
-name: Build and push Docker image to Azure Container Registry
+name: Build and push Docker image to Azure Container Registry 
 
 on:
   push:
