@@ -1,0 +1,91 @@
+# Build and push Docker image (context: src/) to Azure Container Registry (ACR).
+# - Trigger: push to main
+# - Only the files in src/ are used as Docker build context
+# - The workflow writes the repository secret ENV into a .env file inside the container (never checked in)
+# Required repository secrets:
+# - ACR_REGISTRY   (e.g. myregistry.azurecr.io)
+# - ACR_USERNAME
+# - ACR_PASSWORD
+# - IMAGE_NAME     (image name, e.g. my-app)
+# - ENV            (the full contents of your .env; treated as a secret)
+name: Build and push Docker image to Azure Container Registry
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  TAG: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ACR
+        uses: docker/login-action@v2
+        with:
+          registry: ${{ secrets.ACR_REGISTRY }}
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build image using only src/ as context
+        # Use Docker CLI to create a local image we can modify (inject .env)
+        run: |
+          docker build --progress=plain -f src/Dockerfile -t "${{ secrets.ACR_REGISTRY }}/${{ secrets.IMAGE_NAME }}:temp-${TAG}" src
+
+      - name: Create container from temporary image
+        run: |
+          docker create --name tempcontainer "${{ secrets.ACR_REGISTRY }}/${{ secrets.IMAGE_NAME }}:temp-${TAG}"
+
+      - name: Write secret ENV to .env on runner (kept out of logs)
+        # GitHub masks secrets in logs; avoid printing the value
+        run: |
+          printf "%s" "${{ secrets.ENV }}" > .env
+          chmod 600 .env
+
+      - name: Copy .env into container (multiple locations to increase compatibility)
+        run: |
+          # copy into root and /app (many images use /app as working dir); ignore errors if a path doesn't exist
+          docker cp .env tempcontainer:/.env || true
+          docker cp .env tempcontainer:/app/.env || true
+
+      - name: Commit container as final image tag
+        run: |
+          docker commit tempcontainer "${{ secrets.ACR_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${TAG}"
+
+      - name: Push final image to ACR
+        run: |
+          docker push "${{ secrets.ACR_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${TAG}"
+
+      - name: Cleanup temporary resources
+        if: always()
+        run: |
+          docker rm -f tempcontainer || true
+          docker rmi "${{ secrets.ACR_REGISTRY }}/${{ secrets.IMAGE_NAME }}:temp-${TAG}" || true
+          docker rmi "${{ secrets.ACR_REGISTRY }}/${{ secrets.IMAGE_NAME }}:${TAG}" || true
+          # securely remove .env from the runner if shred exists, otherwise remove normally
+          if command -v shred >/dev/null 2>&1; then
+            shred -u .env || true
+          else
+            rm -f .env || true
+          fi
+
+# Required repository secrets:
+# - ACR_REGISTRY (login server, e.g. myregistry.azurecr.io)
+# - ACR_USERNAME
+# - ACR_PASSWORD
+# - IMAGE_NAME (e.g. my-app)
+# - ENV (contents of your .env; keep secret)
